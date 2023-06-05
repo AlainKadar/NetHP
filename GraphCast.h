@@ -4,6 +4,7 @@
 #include <vector>
 #include <string>
 #include <igraph/igraph.h>
+#include <random>
 
 class Network : public igraph_t {
     public:
@@ -33,18 +34,70 @@ class Network : public igraph_t {
 
     void Metropolis(int timesteps, int dumprate, int chunk_size, 
             std::string write_dir);
+
+    void write_report(std::string write_dir);
+};
+
+
+template<typename T>
+class RandomGenerator;
+
+template<>
+class RandomGenerator<int> {
+private:
+    std::mt19937 gen;
+    std::uniform_int_distribution<> dis;
+
+public:
+    // Default constructor
+    RandomGenerator() : gen(std::random_device()()), dis(0, 100) {} 
+
+    // Constructor with parameters
+    RandomGenerator(int seed, int lower_bound, int upper_bound)
+        : gen(seed), dis(lower_bound, upper_bound) {}
+
+    // Generate a random number
+    int getRandomNumber() {
+        return dis(gen);
+    }
+};
+
+template<>
+class RandomGenerator<float> {
+private:
+    std::mt19937 gen;
+    std::uniform_real_distribution<float> dis;
+
+public:
+    // Default constructor
+    RandomGenerator() : gen(std::random_device()()), dis(0.0f, 1.0f) {} 
+
+    // Constructor with parameters
+    RandomGenerator(int seed, float lower_bound, float upper_bound)
+        : gen(seed), dis(lower_bound, upper_bound) {}
+
+    // Generate a random number
+    float getRandomNumber() {
+        return dis(gen);
+    }
 };
 
 class Integrator {
     private:
-    Network* N_ptr;
+
     bool added;
     int frame;
-    int i;
-    int j;
+    int trial_i;
+    int trial_j;
+
 
     public:
 
+    RandomGenerator<float> rng_float;
+    RandomGenerator<int> rng_int;
+    
+    Network* N_ptr;
+    
     bool initial_chunk;    
     
     bool final_chunk;    
@@ -52,6 +105,10 @@ class Integrator {
     Integrator(Network* N_ptr);
 
     ~Integrator();
+
+    int rng(int upper_limit);
+    
+    float rng();
 
     // Degree constraint. Return true if violated
     bool const_deg(igraph_integer_t i, igraph_integer_t j);
@@ -66,7 +123,7 @@ class Integrator {
     // add an edge between them, given that the degree constraint is not
     // violated
     // Return true if an edge toggle was proposed
-    bool toggle_edge(igraph_integer_t i, igraph_integer_t j);
+    bool toggle_edge(igraph_integer_t i, igraph_integer_t j, bool print);
 
     // Return true if proposed move accepted
     bool transition();
