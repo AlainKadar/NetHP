@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <cstdio>
+#include <random>
 
 #define MAX_DEGREE 4
 #define MAX_PATH 3
@@ -107,6 +108,8 @@ Integrator::Integrator(Network *N_ptr) {
     this->initial_chunk = true;
     this->final_chunk = false;
     this->N_ptr->current_energy = getEnergy(this->N_ptr);
+    this->rng_float = RandomGenerator<float>(1750, 0.0f, 1.0f);
+    this->rng_int = RandomGenerator<int>(1750, 0, this->N_ptr->num_verts-1);
 }
 
 Integrator::~Integrator()
@@ -117,38 +120,49 @@ Integrator::~Integrator()
 // add an edge between them, given that the degree constraint is not
 // violated
 // Return whether an edge was toggled or not
-bool Integrator::toggle_edge(igraph_integer_t i, igraph_integer_t j) {
+bool Integrator::toggle_edge(igraph_integer_t i, igraph_integer_t j, bool print) {
     igraph_integer_t eid;
     igraph_get_eid(this->N_ptr, &eid, i, j, false, false);
     if (eid==-1) { //i.e. no edge exists
-        if (const_deg(i,j) or const_path(i,j) or const_planar(i,j)) { //check whether adding edge would violate constraints
+        if (const_deg(i,j) or const_planar(i,j)) { //check whether adding edge would violate constraints
             return false;
         };
         igraph_add_edge(this->N_ptr, i, j);
+        //if (print) {printf("Added\n"); }
         this->added = true;
     } else { 
         igraph_delete_edges(this->N_ptr, igraph_ess_1(eid));
         this->added = false;
+        //if (print) {printf("Deleted\n"); }
     }
     return true;
 }
 
 // Return true if proposed move accepted
 bool Integrator::transition() {
+    //std::cout << "Before transition ecount: " << int(igraph_ecount(this->N_ptr)) << std::endl;
+    /*
     igraph_integer_t i = igraph_rng_get_integer(igraph_rng_default(),
             0, this->N_ptr->num_verts-1);
     igraph_integer_t j = igraph_rng_get_integer(igraph_rng_default(),
             0, this->N_ptr->num_verts-1);
-    this->i=i;
-    this->j=j;
-    if (i==j) { return false; }
+    */
+
+
+    this->trial_i=this->rng_int.getRandomNumber();
+    this->trial_j=this->rng_int.getRandomNumber();
+    if (this->trial_i==this->trial_j) { return false; }
     
-    if (toggle_edge(i,j)) {
+    if (toggle_edge(this->trial_i,this->trial_j,false)) {
         //std::cout << "Delta E is " << getEnergy(this)-this->current_energy << std::endl;
         if (getEnergy(this->N_ptr)>this->N_ptr->current_energy) {
-            if (exp(-(getEnergy(this->N_ptr)-this->N_ptr->current_energy)/this->N_ptr->temp)<igraph_rng_get_unif01(igraph_rng_default())) {
-                toggle_edge(i,j);
+            float num = this->rng_float.getRandomNumber();
+            //std::cout << num << std::endl;
+            if (exp(-(getEnergy(this->N_ptr)-this->N_ptr->current_energy)/this->N_ptr->temp)<num) {
+                //std::cout << "Before reversal ecount: " << igraph_ecount(this->N_ptr) << std::endl;
+                toggle_edge(this->trial_i,this->trial_j,true);
                 //std::cout << "Reverse the move" << std::endl;
+                //std::cout << "After reversal ecount: " << igraph_ecount(this->N_ptr) << std::endl;
                 return false;
             }
         }
@@ -208,7 +222,7 @@ Network::Network(int n, float spikes, int len, float edge_cost, float vert_cost,
             }
         }
     }
-    num_verts = total_verts;
+    this->num_verts = total_verts;
     igraph_vector_int_destroy(&dims);
 }
 
@@ -331,7 +345,7 @@ void Integrator::write_chunk(int chunk_size, int dump_rate, int chunk_num,
         std::string write_dir) {
     int row_num;
     int num_nodes = igraph_vcount(this->N_ptr);
-    int size = 1000;
+    int size = 100000;
     std::vector<int> s(size, -1);
     std::vector<int> t(size, -1);
     std::vector<int> start(size, -1);
@@ -345,11 +359,11 @@ void Integrator::write_chunk(int chunk_size, int dump_rate, int chunk_num,
         std::remove(node_fname.c_str());
         std::remove(energy_fname.c_str());
         std::ofstream edges_file(edge_fname, std::ios::app);
-        std::ofstream nodes_file(node_fname);
+        std::ofstream nodes_file(node_fname, std::ios::app);
         std::ofstream energy_file(energy_fname, std::ios::app);
         this->frame = 1;
         int num_edges = igraph_ecount(this->N_ptr);
-        row_num = num_edges + 1;
+        row_num = num_edges;
         edges_file << "Source;Target;timeset" << std::endl;
         edges_file.close(); 
         nodes_file << "ID;Start;End" << std::endl;
@@ -371,35 +385,35 @@ void Integrator::write_chunk(int chunk_size, int dump_rate, int chunk_num,
             energy_file << chunk_num*chunk_size + i << "," << this->N_ptr->current_energy << std::endl;
         }
         if (transition()) {
-            //std::cout << "Added?: " << this->added << std::endl;
-            if (row_num<size) {
-                if (this->added) {
-                    s[row_num] = this->i;
-                    t[row_num] = this->j;
-                    start[row_num] = this->frame;
-                    row_num++;
-                } else {
-                    for (int r=row_num; r>0; r--) {
-                        if ((s[r]==this->i and t[r]==this->j)
-                         or (s[r]==this->j and t[r]==this->i)) {
-                            if (start[r]==-1) {
-                            } else {
-                                if (end[r]==-1) {
-                                    end[r]=this->frame;
-                                    break;
-                                } else {
-                                    continue;
-                                }
-                            }
+            if (row_num>=size) {
+                s.push_back(-1);
+                t.push_back(-1);
+                start.push_back(-1);
+                end.push_back(-1);
+                size++;
+            }
+            if (this->added) {
+                s[row_num] = this->trial_i;
+                t[row_num] = this->trial_j;
+                start[row_num] = this->frame;
+                row_num++;
+            } else {
+                for (int r=row_num; r>=0; r--) {
+                    if ((s[r]==this->trial_i and t[r]==this->trial_j)
+                     or (s[r]==this->trial_j and t[r]==this->trial_i)) {
+                        if (end[r]==-1) {
+                            end[r]=this->frame;
+                            break;
+                        } else {
+                            continue;
                         }
                     }
                 }
-                this->frame++;
-            } else {
-                printf("Row number exceeded size!\n");
             }
+            this->frame++;
         }
     }
+    std::cout << "EOF2 ecount " << int(igraph_ecount(this->N_ptr)) << std::endl;
     std::ofstream edges_file(edge_fname, std::ios::app);
     std::ofstream nodes_file(node_fname);
     for (int i=0; i<row_num; i++) {
@@ -410,8 +424,28 @@ void Integrator::write_chunk(int chunk_size, int dump_rate, int chunk_num,
     for (int i=0; i<num_nodes; i++) {
         nodes_file << i << ";" << 0 << ";" << this->frame << std::endl;
     }
+    std::cout << "EOF ecount " << int(igraph_ecount(this->N_ptr)) << std::endl;
 }
 
+void Network::write_report(std::string write_dir) {
+    std::string report_fname = write_dir + "report.txt";
+    std::cout << "Report ecount: " << igraph_ecount(this) << std::endl;
+    //Degree sequence
+    igraph_vector_int_t degrees;
+    igraph_vs_t vs;
+    igraph_vs_all(&vs);
+    igraph_vector_int_init(&degrees, igraph_vcount(this));
+    igraph_degree(this, &degrees, vs, IGRAPH_ALL, false);
+    int degree_dist[7] = {0, 0, 0, 0, 0, 0};
+    for (int i=0; i<igraph_vcount(this); i++) {
+        degree_dist[VECTOR(degrees)[i]]++;
+    }
+    std::remove(report_fname.c_str());
+    std::ofstream report_file(report_fname, std::ios::app);
+    for (int i=0; i<6; i++) {
+        report_file << i << ": " << degree_dist[i] << std::endl;
+    }
+}
 
 void Network::Metropolis(int timesteps, int chunk_size, int dump_rate,
        std::string write_dir) {
@@ -421,13 +455,15 @@ void Network::Metropolis(int timesteps, int chunk_size, int dump_rate,
         if (i==chunks-1) { I.final_chunk = true; }
         I.write_chunk(chunk_size, dump_rate, i, write_dir);
         I.initial_chunk = false;
+        std::cout << "Metropolis ecount: " << igraph_ecount(this) << std::endl;
     }
+    write_report(write_dir);
+    std::cout << "Final ecount: " << igraph_ecount(this) << std::endl;
 }
 
 int main() {
-    interface::GraphCast GC(4, 0.5, 5, -0.1, 0.1, 0.1, 1);
+    interface::GraphCast GC(3, 1, 1, -3, 0, 0, 1);
     //interface::GraphCast GC(10, -0.1, 0.1, 0.1, 1);
     std::string dir = "test/";
-    GC.Metropolis(100000, 10000, 100, dir);
-    //Network graph(10, 0.5, 5, -0.1, 0.1, 0.1, 1);
+    GC.Metropolis(1000000, 1000000, 1000000, dir);
 }
