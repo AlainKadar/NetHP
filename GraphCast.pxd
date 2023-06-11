@@ -24,7 +24,7 @@ cdef extern from "GraphCast.h" namespace "interface":
         GraphCast(int, float, float, float, float) except +
         GraphCast(int, float, int, float, float, float, float) except +
         void Metropolis(int iterations, int chunk_size, int dump_rate, 
-                        string write_dir)
+                        string write_dir, int seed)
         float getEnergy()
         void print_components()
         void getGraph()

@@ -1,11 +1,11 @@
 #include "GraphCast.h"
+#include "Integrators.h"
 
 #include <iostream>
 #include <fstream>
 #include <stdio.h>
 #include <stdlib.h>
 #include <cstdio>
-#include <random>
 
 #define MAX_DEGREE 4
 #define MAX_PATH 3
@@ -41,7 +41,7 @@ namespace interface {
     GraphCast::GraphCast (int num_verts, float edge_cost, float vert_cost,
             float cluster_cost, float temp) : N_ptr(num_verts, edge_cost, vert_cost, cluster_cost, temp)
     {
-        //Network graph(num_verts, edge_cost, vert_cost, cluster_cost, temp);
+        //dynamic_graph graph(num_verts, edge_cost, vert_cost, cluster_cost, temp);
         G_ptr = &N_ptr;
     }
 
@@ -50,7 +50,7 @@ namespace interface {
     GraphCast::GraphCast (int n, float spikes, int len, float edge_cost,
             float vert_cost, float cluster_cost, float temp) : N_ptr(n, spikes, len, edge_cost, vert_cost, cluster_cost,
                 temp) {
-        //Network graph(n, spikes, len, edge_cost, vert_cost, cluster_cost,
+        //dynamic_graph graph(n, spikes, len, edge_cost, vert_cost, cluster_cost,
         //        temp);
         //N_ptr = graph;
         G_ptr = &N_ptr;
@@ -89,8 +89,9 @@ namespace interface {
     }
 
     void GraphCast::Metropolis (int iterations, int chunk_size, int dump_rate,
-            std::string write_dir) {
-        this->N_ptr.Metropolis(iterations, chunk_size, dump_rate, write_dir);
+            std::string write_dir, int seed) {
+        this->N_ptr.Metropolis(iterations, chunk_size, dump_rate, write_dir,
+                seed);
     }
     
     float GraphCast::getEnergy () {
@@ -102,14 +103,14 @@ namespace interface {
     }
 }
 
-Integrator::Integrator(Network *N_ptr) {
+Integrator::Integrator(dynamic_graph *N_ptr, int seed) {
     this->N_ptr = N_ptr;
     this->added = false;
     this->initial_chunk = true;
     this->final_chunk = false;
     this->N_ptr->current_energy = getEnergy(this->N_ptr);
-    this->rng_float = RandomGenerator<float>(1750, 0.0f, 1.0f);
-    this->rng_int = RandomGenerator<int>(1750, 0, this->N_ptr->num_verts-1);
+    this->rng_float = RandomGenerator<float>(seed, 0.0f, 1.0f);
+    this->rng_int = RandomGenerator<int>(seed, 0, this->N_ptr->num_verts-1);
 }
 
 Integrator::~Integrator()
@@ -180,10 +181,10 @@ bool boundary(int i, int n) {
     return false;
 }
 // Constructor - default
-Network::Network() {}
+dynamic_graph::dynamic_graph() {}
 
 // Constructor - initialise an empty graph
-Network::Network(int num_verts, float edge_cost, float vert_cost, float temp,
+dynamic_graph::dynamic_graph(int num_verts, float edge_cost, float vert_cost, float temp,
         float cluster_cost) {
     igraph_empty(this, num_verts, IGRAPH_UNDIRECTED);
     this->num_verts = num_verts;
@@ -194,7 +195,7 @@ Network::Network(int num_verts, float edge_cost, float vert_cost, float temp,
 }
 
     // Constructor - initialise a square lattice decorated with spikes
-Network::Network(int n, float spikes, int len, float edge_cost, float vert_cost,
+dynamic_graph::dynamic_graph(int n, float spikes, int len, float edge_cost, float vert_cost,
         float cluster_cost, float temp) {
     igraph_vector_int_t dims;
     igraph_vector_int_init(&dims, 2);
@@ -227,13 +228,13 @@ Network::Network(int n, float spikes, int len, float edge_cost, float vert_cost,
 }
 
 // Destructor
-Network::~Network() {
+dynamic_graph::~dynamic_graph() {
     igraph_destroy(this);
 }
 
 
 // Print the component size distribution
-void Network::print_components() {
+void dynamic_graph::print_components() {
     igraph_vector_int_t csize;
     igraph_integer_t i;
     igraph_vector_int_init(&csize, 0);
@@ -266,6 +267,7 @@ float Integrator::getEnergy(igraph_t *graph) {
     igraph_connected_components(this->N_ptr, &membership, &csize, 0, IGRAPH_STRONG);
 
     // iterate over the subgraphs
+    float cluster_contribution = 0;
     for (i = 0; i < igraph_vector_int_size(&csize); i++) {
         /*COMPONENT SIZE ENERGY CONTRIBUTION*/
         energy += this->N_ptr->vert_cost*((VECTOR(csize)[i]-1)*
@@ -284,9 +286,12 @@ float Integrator::getEnergy(igraph_t *graph) {
                 IGRAPH_SUBGRAPH_CREATE_FROM_SCRATCH);
         igraph_real_t res;
         igraph_transitivity_undirected(&subgraph, &res, IGRAPH_TRANSITIVITY_ZERO);
-        energy += this->N_ptr->cluster_cost*res;
+        //energy += this->N_ptr->cluster_cost*res;
+        cluster_contribution += this->N_ptr->cluster_cost*res;
+
         igraph_destroy(&subgraph);
     }
+    energy += cluster_contribution/igraph_vector_int_size(&csize);
     igraph_vector_int_destroy(&membership);
     igraph_vector_int_destroy(&csize);
     igraph_vector_int_destroy(&component_ids);
@@ -427,7 +432,7 @@ void Integrator::write_chunk(int chunk_size, int dump_rate, int chunk_num,
     std::cout << "EOF ecount " << int(igraph_ecount(this->N_ptr)) << std::endl;
 }
 
-void Network::write_report(std::string write_dir) {
+void dynamic_graph::write_report(std::string write_dir) {
     std::string report_fname = write_dir + "report.txt";
     std::cout << "Report ecount: " << igraph_ecount(this) << std::endl;
     //Degree sequence
@@ -447,9 +452,9 @@ void Network::write_report(std::string write_dir) {
     }
 }
 
-void Network::Metropolis(int timesteps, int chunk_size, int dump_rate,
-       std::string write_dir) {
-    Integrator I(this);
+void dynamic_graph::Metropolis(int timesteps, int chunk_size, int dump_rate,
+       std::string write_dir, int seed) {
+    Integrator I(this, seed);
     int chunks = timesteps/chunk_size;
     for (int i=0; i<chunks; i++) {
         if (i==chunks-1) { I.final_chunk = true; }
@@ -462,8 +467,8 @@ void Network::Metropolis(int timesteps, int chunk_size, int dump_rate,
 }
 
 int main() {
-    interface::GraphCast GC(3, 1, 1, -3, 0, 0, 1);
-    //interface::GraphCast GC(10, -0.1, 0.1, 0.1, 1);
-    std::string dir = "test/";
-    GC.Metropolis(1000000, 1000000, 1000000, dir);
+    //interface::GraphCast GC(3, 0, 0, -20, 0, 0, 2);
+    interface::GraphCast GC(50, -1.5, 0.1, 0, 3);
+    std::string dir = "assembly_test/";
+    GC.Metropolis(100000, 100000, 100000, dir, 1750);
 }
